@@ -1,49 +1,101 @@
 #include <iostream>
+#include <fstream>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include "utils.h"
 
 using namespace std;
 using namespace cv;
 
-void getContoursOutline(Mat src, int thickness = 1, int width = 0, int height = 0) {
+void scaleContours(vector<vector<Point>>& cnts, float scaleX, float scaleY)
+{
+	for (int i = 0; i < cnts.size(); i++) {
+		vector<Point>& cnt = cnts[i];
+		for (int j = 0; j < cnt.size(); j++) {
+			cnt[j] = Point(cnt[j].x * scaleX, cnt[j].y * scaleY);
+		}
+	}
+}
+
+Mat getContoursOutline(Mat src, int thickness, int width, int height, bool resultTransparent) {
 	Mat gray;
 	if (src.channels() == 1) {
-		gray = src;
+		gray = src.clone();
 	}
 	else {
 		cvtColor(src, gray, COLOR_BGR2GRAY);
 	}
 
-	imshow("orig", gray);
-	Canny(gray, gray, 30, 200, 5);
-	// gray = ~gray;
-	imshow("canny", gray);
+	// We should not work on large images
+	gray = Utils::resizeAspect(gray, 500);
 
+	// prep for contour detection
+	Canny(gray, gray, 20, 50, 3);
+	threshold(gray, gray, 100, 255, THRESH_BINARY);
 
-	threshold(gray, gray, 200, 255, THRESH_BINARY);
-	Mat cont = gray;
+	// find contours
 	vector<vector<Point>> contours;
 	vector<Vec4i> hierarchy;
-	findContours(cont, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
-	Mat res = Mat(gray.rows, gray.cols, CV_8UC1, Scalar(255));
-	drawContours(res, contours, -1, Scalar(0), thickness, LINE_AA, hierarchy);
+	findContours(gray, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
 
-	if (width > 0 || height > 0) {
-		double ratio = res.cols / res.rows;
-		double w = width > 0 ? width : height * ratio;
-		double h = height > 0 ? height : width / ratio;
-		resize(res, res, Size(w, h));
-	}
+	// resize to original size or requested size
+	double ratio = (double)src.cols / src.rows;
+	double w = width > 0 ? width : (height > 0 ? height * ratio : src.cols);
+	double h = height > 0 ? height : (width > 0 ? width / ratio : src.rows);
 
-	imshow("res", res);
-	//waitKey(0);
+	scaleContours(contours, w / gray.cols, h / gray.rows);
+	int type = resultTransparent ? CV_8UC4 : CV_8UC1;
+	Scalar bg = resultTransparent ? Scalar(0) : Scalar(255);
+	Scalar fg = resultTransparent ? Scalar(0, 0, 0, 255) : Scalar(0);
+	Mat res = Mat(h, w, type, bg);
+	drawContours(res, contours, -1, fg, thickness, LINE_AA, hierarchy);
+
+	return res;
+}
+
+void encodeDecodePNG() {
+	const char* fname = "tmp\\orlando.png";
+
+	ifstream is;
+	is.open(fname, ios::binary);
+
+	// get length of file:
+	is.seekg(0, ios::end);
+	int length = is.tellg();
+
+	// allocate memory:
+	vector<char> buffer(length);
+
+	// read data as a block:
+	is.seekg(0, ios::beg);
+	is.read(buffer.data(), length);
+	is.close();
+
+	// decode png
+	Mat decoded = imdecode(buffer, IMREAD_COLOR);
+	imshow("decoded", decoded);
+
+	// encode & save as png
+	int total = decoded.total() * decoded.elemSize();
+	vector<uint8_t> localBuffer;
+	imencode(".png", decoded, localBuffer);
+	ofstream file("tmp\\encoded_png.png", ios::binary);
+	file.write((char*)localBuffer.data(), localBuffer.size());
+	file.close();
+
+	// show encoded
+	Mat encoded = imread("tmp\\encoded_png.png", IMREAD_COLOR);
+	imshow("encoded", encoded);
+
+	waitKey(0);
 }
 
 void main()
 {
-	// const char* fname = "c:\\temp\\textview.png";
-	const char* fname = "c:\\temp\\textblurry.png";
+	encodeDecodePNG();
+	return;
+	const char* fname = "tmp\\orlando.png";
 	
 	bool video = false;
 
@@ -58,8 +110,6 @@ void main()
 		return;
 	}
 
-	getContoursOutline(image, 2 , image.cols / 2);
-	resize(image, image, Size(image.cols / 2, image.cols / 2));
-	imshow("orig", image);
-	waitKey(0);
+	//imshow("res", res);
+	//waitKey(0);
 }
